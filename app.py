@@ -571,7 +571,7 @@ def main():
     )
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["1) Dépenses", "2) Crédits (dont immo)", "3) Hypothèses", "4) Résultats", "5) Export / reprise"]
+        ["1) Dépenses", "2) Crédits", "3) Hypothèses", "4) Résultats", "5) Export / reprise"]
     )
 
     # --- Dépenses ---
