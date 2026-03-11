@@ -4,7 +4,7 @@ App — Salaire requis pour soutenir un train de vie (France, salarié)
 Entrées :
 - Dépenses (lignes modifiables, fréquences, Essentiel/Confort)
 - Crédits / dettes (multi-prêts)
-  - Pour l'immo : option "prix du bien" + "apport" => capital financé auto
+  - Pour l'immo : tu peux saisir soit (Prix du bien + Apport), soit Capital directement.
 
 Sorties :
 - Budget mensuel / annuel (dépenses)
@@ -15,7 +15,7 @@ Sorties :
 - Annuel : Net après IR / Net avant IR / Brut
 - Scénarios : Minimum / Confort / Ambitieux
 
-Hypothèses :
+Hypothèses (simples et transparentes) :
 - Net avant IR = Net après IR / (1 - PAS)  (approx, peut régulariser)
 - Brut ≈ Net avant IR / ratio_net→brut    (approx, dépend du statut)
 """
@@ -36,7 +36,7 @@ import altair as alt
 # -----------------------
 # Config
 # -----------------------
-APP_TITLE = "Simulateur de salaire requis — Train de vie (France)"
+APP_TITLE = "Simulateur de salaire — Train de vie (France)"
 CURRENCY = "€"
 
 FREQ_OPTIONS = ["mensuel", "hebdo", "trimestriel", "annuel", "ponctuel"]
@@ -133,16 +133,16 @@ EXPENSE_COLS = [
     "niveau", "commentaire", "actif"
 ]
 
-# Ajouts immo:
+# Ajouts immo :
 # - prix_bien (optionnel), apport (optionnel)
-# - inclure_frais_notaire (bool) + frais_notaire_pct
+# - inclure_frais_notaire (bool) + frais_notaire_pct (% du prix)
 LOAN_COLS = [
     "nom", "type",
-    "capital",                 # capital saisi (si pas d'immo, ou si tu préfères saisir directement le capital financé)
-    "prix_bien",               # si immo : prix du bien (optionnel)
-    "apport",                  # si immo : apport (optionnel)
-    "inclure_frais_notaire",   # si immo : inclure frais de notaire dans le capital financé ?
-    "frais_notaire_pct",       # % du prix du bien
+    "capital",
+    "prix_bien",
+    "apport",
+    "inclure_frais_notaire",
+    "frais_notaire_pct",
     "taux_annuel_pct", "duree_annees",
     "assurance_mode", "assurance_mensuelle", "assurance_taux_annuel_pct",
     "frais", "etaler_frais"
@@ -155,6 +155,7 @@ def ensure_expense_schema(df: pd.DataFrame) -> pd.DataFrame:
     for c in EXPENSE_COLS:
         if c not in df.columns:
             df[c] = None
+
     df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0.0)
     df["frequence"] = df["frequence"].fillna("mensuel")
     df["niveau"] = df["niveau"].fillna("Essentiel")
@@ -172,16 +173,18 @@ def ensure_loan_schema(df: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = None
 
-    num_cols = ["capital", "prix_bien", "apport", "frais_notaire_pct", "taux_annuel_pct", "duree_annees",
-                "assurance_mensuelle", "assurance_taux_annuel_pct", "frais"]
+    num_cols = [
+        "capital", "prix_bien", "apport", "frais_notaire_pct",
+        "taux_annuel_pct", "duree_annees",
+        "assurance_mensuelle", "assurance_taux_annuel_pct", "frais"
+    ]
     for c in num_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
     df["type"] = df["type"].fillna("autre")
     df["assurance_mode"] = df["assurance_mode"].fillna("Aucune")
     df["etaler_frais"] = df["etaler_frais"].fillna(True).astype(bool)
-    df["inclure_frais_notaire"] = df["inclure_frais_notaire"].fillna(True).astype(bool)
-
+    df["inclure_frais_notaire"] = df["inclure_frais_notaire"].fillna(False).astype(bool)
     df["nom"] = df["nom"].fillna("")
     return df[LOAN_COLS].copy()
 
@@ -199,6 +202,9 @@ def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     for _, row in df.iterrows():
         amount = float(row["montant"] or 0.0)
         freq = str(row["frequence"]).strip().lower()
+
+        if amount < 0:
+            warnings.append(f"Montant négatif sur '{row['nom']}' (vérifie).")
 
         if freq not in FREQ_OPTIONS:
             warnings.append(f"Fréquence inconnue '{freq}' → traitée comme 'mensuel'.")
@@ -239,6 +245,11 @@ def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
 # Loans compute (avec apport immo)
 # -----------------------
 def compute_loans(df: pd.DataFrame) -> Tuple[pd.DataFrame, float, List[str]]:
+    """
+    Logique immo (simple) :
+    - Si type=immo et prix_bien>0 : capital financé = prix_bien - apport (+ notaire optionnel)
+    - Sinon : capital financé = capital ; si apport>0, on le déduit du capital (warning)
+    """
     warnings: List[str] = []
     df = ensure_loan_schema(df).copy()
 
@@ -258,7 +269,6 @@ def compute_loans(df: pd.DataFrame) -> Tuple[pd.DataFrame, float, List[str]]:
         name = r["nom"] or "(sans nom)"
         loan_type = str(r["type"] or "autre").strip().lower()
 
-        # Capital utilisé pour le calcul
         cap = float(r["capital"])
         price = float(r["prix_bien"])
         apport = float(r["apport"])
@@ -266,12 +276,27 @@ def compute_loans(df: pd.DataFrame) -> Tuple[pd.DataFrame, float, List[str]]:
         notary_pct = float(r["frais_notaire_pct"])
 
         cap_used = cap
-        if loan_type == "immo" and price > 0:
-            cap_used = max(0.0, price - apport)
-            if apport > price:
-                warnings.append(f"Prêt immo '{name}': apport > prix du bien → capital financé mis à 0.")
-            if incl_notary and notary_pct > 0:
-                cap_used += price * (notary_pct / 100.0)
+
+        if loan_type == "immo":
+            if price > 0:
+                cap_used = max(0.0, price - apport)
+                if apport > price:
+                    warnings.append(f"Prêt immo '{name}': apport > prix du bien → capital financé mis à 0.")
+                if incl_notary:
+                    if notary_pct > 0:
+                        cap_used += price * (notary_pct / 100.0)
+                    else:
+                        warnings.append(f"Prêt immo '{name}': frais de notaire cochés mais % = 0.")
+            else:
+                cap_used = cap
+                if cap > 0 and apport > 0:
+                    cap_used = max(0.0, cap - apport)
+                    warnings.append(f"Prêt immo '{name}': prix du bien non renseigné → apport déduit du capital saisi.")
+                if incl_notary and notary_pct > 0:
+                    warnings.append(f"Prêt immo '{name}': frais de notaire non appliqués (prix du bien manquant).")
+
+            if (cap > 0 or price > 0) and cap_used <= 0:
+                warnings.append(f"Prêt immo '{name}': capital financé calculé à 0 (vérifie prix/apport/capital).")
 
         capital_finance.append(cap_used)
 
@@ -356,6 +381,46 @@ def brut_from_ratio(net_before_ir: float, ratio_net_brut: float) -> float:
     return net_before_ir / ratio_net_brut if ratio_net_brut > 0 else float("nan")
 
 
+def build_scenarios(exp_m: pd.DataFrame, loans_total_monthly: float, assumptions: Dict) -> Tuple[List[Dict], pd.DataFrame]:
+    active = exp_m[exp_m["actif"] == True].copy()
+    dep_total_m = float(active["mensuel_equiv"].sum())
+    dep_ess_m = float(active[active["niveau"] == "Essentiel"]["mensuel_equiv"].sum())
+
+    base_epargne = float(assumptions.get("epargne_fixe", 300.0))
+    base_marge = float(assumptions.get("marge_imprevus_pct", 0.10))
+    amb_bonus_epargne = float(assumptions.get("amb_bonus_epargne", 200.0))
+    amb_bonus_marge = float(assumptions.get("amb_bonus_marge", 0.0))
+
+    def _scenario(name: str, depenses_m: float, epargne_fix: float, marge_pct: float) -> Dict:
+        need_after, breakdown = compute_need_net_after_ir(
+            depenses_m=depenses_m,
+            prets_m=loans_total_monthly,
+            epargne_fixe=epargne_fix,
+            epargne_pct_revenu=float(assumptions.get("epargne_pct_revenu", 0.0)),
+            marge_imprevus_pct=marge_pct,
+        )
+        net_before = net_before_ir_from_pas(need_after, float(assumptions["pas_rate"]))
+        brut = brut_from_ratio(net_before, float(assumptions["ratio_net_brut"]))
+        return {
+            "Scénario": name,
+            "Net après IR (mensuel)": need_after,
+            "Net avant IR (mensuel)": net_before,
+            "Brut (mensuel)": brut,
+            "Net après IR (annuel)": need_after * 12,
+            "Net avant IR (annuel)": net_before * 12,
+            "Brut (annuel)": brut * 12,
+            "_breakdown": breakdown,
+        }
+
+    scenarios = [
+        _scenario("Minimum", dep_ess_m, base_epargne, base_marge),
+        _scenario("Confort", dep_total_m, base_epargne, base_marge),
+        _scenario("Ambitieux", dep_total_m, base_epargne + amb_bonus_epargne, base_marge + amb_bonus_marge),
+    ]
+    scen_df = pd.DataFrame([{k: v for k, v in s.items() if not k.startswith("_")} for s in scenarios])
+    return scenarios, scen_df
+
+
 # -----------------------
 # Defaults
 # -----------------------
@@ -364,37 +429,54 @@ def default_expenses() -> pd.DataFrame:
         {"nom": "Loyer", "categorie": "Logement", "montant": 1150.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Charges", "categorie": "Logement", "montant": 50.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Internet et abonnements", "categorie": "Logement", "montant": 60.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Internet + abonnements", "categorie": "Abonnements", "montant": 60.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
         {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
-        {"nom": "Assurances", "categorie": "transports", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
+        {"nom": "Assurance auto", "categorie": "Assurances", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
     ]
     return ensure_expense_schema(pd.DataFrame(data))
 
 
 def default_loans() -> pd.DataFrame:
+    # Exemple : immo + auto (modifiable/supprimable)
     data = [
         {
-            "nom": "Prêt immo",
+            "nom": "Prêt immo (exemple)",
             "type": "immo",
-            "capital": 150000.0,
-            "prix_bien": 0.0,
+            "capital": 0.0,                 # ignoré si prix_bien > 0
+            "prix_bien": 170000.0,
             "apport": 20000.0,
-            "inclure_frais_notaire": True,
+            "inclure_frais_notaire": False, # à activer si tu veux
             "frais_notaire_pct": 8.5,
             "taux_annuel_pct": 3.6,
             "duree_annees": 25.0,
-            "assurance_mode": "€/mois",
+            "assurance_mode": "Aucune",
             "assurance_mensuelle": 0.0,
             "assurance_taux_annuel_pct": 0.0,
             "frais": 0.0,
             "etaler_frais": True,
-        }
+        },
+        {
+            "nom": "Prêt auto (exemple)",
+            "type": "auto",
+            "capital": 15000.0,
+            "prix_bien": 0.0,
+            "apport": 0.0,
+            "inclure_frais_notaire": False,
+            "frais_notaire_pct": 0.0,
+            "taux_annuel_pct": 4.2,
+            "duree_annees": 5.0,
+            "assurance_mode": "€/mois",
+            "assurance_mensuelle": 20.0,
+            "assurance_taux_annuel_pct": 0.0,
+            "frais": 300.0,
+            "etaler_frais": True,
+        },
     ]
     return ensure_loan_schema(pd.DataFrame(data))
 
@@ -404,7 +486,7 @@ def default_assumptions() -> Dict:
         "pas_rate": 0.081,          # 8,1%
         "ratio_net_brut": 0.78,
         "epargne_fixe": 300.0,
-        "epargne_pct_revenu": 0.0,  # avancé
+        "epargne_pct_revenu": 0.0,  # avancé (optionnel)
         "marge_imprevus_pct": 0.10,
         "amb_bonus_epargne": 200.0,
         "amb_bonus_marge": 0.00,
@@ -416,7 +498,7 @@ def default_assumptions() -> Dict:
 # -----------------------
 def bundle_to_json(expenses_df: pd.DataFrame, loans_df: pd.DataFrame, assumptions: Dict) -> str:
     payload = {
-        "version": 3,
+        "version": 4,
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "assumptions": assumptions,
         "expenses": ensure_expense_schema(expenses_df).to_dict(orient="records"),
@@ -445,23 +527,56 @@ def init_state():
         st.session_state.assumptions = default_assumptions()
 
 
+def render_hero():
+    st.markdown(
+        """
+        <style>
+          .hero {
+            padding: 26px 30px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #0b0f14, #111827 55%, #0b0f14);
+            margin-bottom: 18px;
+          }
+          .hero h1 {
+            color: #ffffff;
+            margin: 0;
+            font-size: 42px;
+            line-height: 1.05;
+            font-weight: 800;
+          }
+          .hero p {
+            color: rgba(255,255,255,0.65);
+            margin: 10px 0 0;
+            font-size: 14px;
+          }
+        </style>
+        <div class="hero">
+          <h1>Simulateur de salaire, la richesse sinon rien.</h1>
+          <p>« Ce qui ne se mesure pas ne s’améliore pas. » — Peter Drucker</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     init_state()
 
-    st.title(APP_TITLE)
+    render_hero()
+
     st.caption(
         "On part du **net après IR (cash sur le compte)**, puis on remonte vers **net avant IR** et **brut**. "
-        "Tout est simple, visible, modifiable."
+        "Modèle volontairement simple : PAS et ratio net→brut sont des approximations ajustables."
     )
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["1) Mes dépenses", "2) Mes crédits", "3) Hypothèses", "4) Résultats", "5) Export / reprise"]
+        ["1) Dépenses", "2) Crédits (dont immo)", "3) Hypothèses", "4) Résultats", "5) Export / reprise"]
     )
 
     # --- Dépenses ---
     with tab1:
-        st.subheader("Mes dépenses")
+        st.subheader("Dépenses")
         exp = ensure_expense_schema(st.session_state.expenses_df)
         exp_editor = st.data_editor(
             exp,
@@ -492,10 +607,11 @@ def main():
 
     # --- Crédits ---
     with tab2:
-        st.subheader("Mes crédits / dettes")
+        st.subheader("Crédits / dettes")
         st.write(
-            "Pour un **prêt immo** : tu peux soit saisir directement **Capital** (capital emprunté), "
-            "soit saisir **Prix du bien + Apport** (et l’app calcule le capital financé)."
+            "Pour un **prêt immo** :\n"
+            "- soit tu renseignes **Prix du bien + Apport** (recommandé)\n"
+            "- soit tu renseignes **Capital** (capital financé). Si tu mets aussi un apport, il sera déduit du capital (warning)."
         )
 
         loans = ensure_loan_schema(st.session_state.loans_df)
@@ -512,7 +628,7 @@ def main():
                 "inclure_frais_notaire": st.column_config.CheckboxColumn("[Immo] Inclure frais de notaire"),
                 "frais_notaire_pct": st.column_config.NumberColumn("[Immo] Frais de notaire (%)", min_value=0.0, step=0.1, format="%.1f"),
 
-                "capital": st.column_config.NumberColumn(f"Capital emprunté (si pas prix/apport) ({CURRENCY})", min_value=0.0, step=1000.0, format="%.0f"),
+                "capital": st.column_config.NumberColumn(f"Capital (si pas prix/apport) ({CURRENCY})", min_value=0.0, step=1000.0, format="%.0f"),
                 "taux_annuel_pct": st.column_config.NumberColumn("Taux annuel (%)", min_value=0.0, step=0.1, format="%.2f"),
                 "duree_annees": st.column_config.NumberColumn("Durée (années)", min_value=0.1, step=0.5, format="%.1f"),
 
@@ -599,48 +715,11 @@ def main():
             st.error("Erreurs :\n- " + "\n- ".join(errors))
             st.stop()
 
-        if exp_warn or loan_warn:
-            st.warning("Avertissements :\n- " + "\n- ".join(exp_warn + loan_warn))
+        warns_all = exp_warn + loan_warn
+        if warns_all:
+            st.warning("Avertissements :\n- " + "\n- ".join(warns_all))
 
-        active = exp_m[exp_m["actif"] == True].copy()
-        depenses_total_m = float(active["mensuel_equiv"].sum())
-        depenses_ess_m = float(active[active["niveau"] == "Essentiel"]["mensuel_equiv"].sum())
-
-        scenarios = []
-
-        def build_scenario(name: str, depenses_m: float, epargne_fix: float, marge_pct: float):
-            need_after, breakdown = compute_need_net_after_ir(
-                depenses_m=depenses_m,
-                prets_m=loans_total,
-                epargne_fixe=epargne_fix,
-                epargne_pct_revenu=float(a.get("epargne_pct_revenu", 0.0)),
-                marge_imprevus_pct=marge_pct,
-            )
-            net_before = net_before_ir_from_pas(need_after, float(a["pas_rate"]))
-            brut = brut_from_ratio(net_before, float(a["ratio_net_brut"]))
-            return {
-                "Scénario": name,
-                "Net après IR (mensuel)": need_after,
-                "Net avant IR (mensuel)": net_before,
-                "Brut (mensuel)": brut,
-                "Net après IR (annuel)": need_after * 12,
-                "Net avant IR (annuel)": net_before * 12,
-                "Brut (annuel)": brut * 12,
-                "_breakdown": breakdown,
-            }
-
-        scenarios.append(build_scenario("Minimum", depenses_ess_m, float(a["epargne_fixe"]), float(a["marge_imprevus_pct"])))
-        scenarios.append(build_scenario("Confort", depenses_total_m, float(a["epargne_fixe"]), float(a["marge_imprevus_pct"])))
-        scenarios.append(
-            build_scenario(
-                "Ambitieux",
-                depenses_total_m,
-                float(a["epargne_fixe"]) + float(a.get("amb_bonus_epargne", 0.0)),
-                float(a["marge_imprevus_pct"]) + float(a.get("amb_bonus_marge", 0.0)),
-            )
-        )
-
-        scen_df = pd.DataFrame([{k: v for k, v in s.items() if not k.startswith("_")} for s in scenarios])
+        scenarios, scen_df = build_scenarios(exp_m, loans_total, a)
 
         pick = st.radio("Choisir le scénario", scen_df["Scénario"].tolist(), horizontal=True, index=1)
         s = next(x for x in scenarios if x["Scénario"] == pick)
@@ -688,11 +767,16 @@ def main():
         loans = ensure_loan_schema(st.session_state.loans_df)
         a = st.session_state.assumptions
 
+        exp_m, _ = monthlyize_expenses(exp)
+        _, loans_total, _ = compute_loans(loans)
+        _, scen_df = build_scenarios(exp_m, loans_total, a)
+
         colA, colB = st.columns(2)
         with colA:
             st.markdown("### CSV")
             st.download_button("Dépenses (CSV)", exp.to_csv(index=False).encode("utf-8"), "depenses.csv", "text/csv")
             st.download_button("Crédits (CSV)", loans.to_csv(index=False).encode("utf-8"), "credits.csv", "text/csv")
+            st.download_button("Scénarios (CSV)", scen_df.to_csv(index=False).encode("utf-8"), "scenarios.csv", "text/csv")
 
         with colB:
             st.markdown("### Fichier de reprise")
