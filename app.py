@@ -1,28 +1,18 @@
 """
-App — Salaire requis pour soutenir un train de vie (France, salarié)
+Simulateur — Salaire requis (France, salarié)
+Design:
+- Fond photo (assets/chateau_meung.jpg) + overlay sombre
+- Bandeau premium (hero) avec le titre demandé + citation
+- UI épurée (4 onglets), pas d'export/import
 
-Entrées :
-- Dépenses (lignes modifiables, fréquences, Essentiel/Confort)
-- Crédits / dettes (multi-prêts)
-  - Pour l'immo : tu peux saisir soit (Prix du bien + Apport), soit Capital directement.
-
-Sorties :
-- Budget mensuel / annuel (dépenses)
-- Total mensualités crédits
-- Besoin cash = Net après IR requis (dépenses + crédits + épargne + marge imprévus)
-- Net avant IR requis (approx via PAS)
-- Brut requis (approx via ratio net→brut)
-- Annuel : Net après IR / Net avant IR / Brut
-- Scénarios : Minimum / Confort / Ambitieux
-
-Hypothèses (simples et transparentes) :
-- Net avant IR = Net après IR / (1 - PAS)  (approx, peut régulariser)
-- Brut ≈ Net avant IR / ratio_net→brut    (approx, dépend du statut)
+Immo:
+- Si type=immo et prix_bien>0 : capital financé = prix_bien - apport (+ notaire optionnel)
+- Sinon : capital financé = capital ; si apport>0, on le déduit du capital (warning)
 """
 
 from __future__ import annotations
 
-import json
+import base64
 import math
 from datetime import date, datetime
 from typing import Dict, List, Tuple, Optional
@@ -38,11 +28,161 @@ import altair as alt
 # -----------------------
 APP_TITLE = "Simulateur de salaire — Train de vie (France)"
 CURRENCY = "€"
+BACKGROUND_IMAGE_PATH = "assets/chateau_meung.jpg"
 
 FREQ_OPTIONS = ["mensuel", "hebdo", "trimestriel", "annuel", "ponctuel"]
 LEVEL_OPTIONS = ["Essentiel", "Confort"]
 LOAN_TYPE_OPTIONS = ["immo", "auto", "conso", "etudiant", "autre"]
 INS_TYPE_OPTIONS = ["Aucune", "€/mois", "%/an sur capital"]
+
+
+# -----------------------
+# Design helpers
+# -----------------------
+def _img_to_data_uri(path: str) -> Optional[str]:
+    try:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        return None
+
+
+def inject_css():
+    bg = _img_to_data_uri(BACKGROUND_IMAGE_PATH)
+
+    if bg:
+        background_css = f"""
+        .stApp {{
+          background-image:
+            linear-gradient(rgba(8,10,14,0.82), rgba(8,10,14,0.82)),
+            url("{bg}");
+          background-size: cover;
+          background-attachment: fixed;
+          background-position: center;
+        }}
+        """
+    else:
+        background_css = """
+        .stApp {
+          background: radial-gradient(1200px 800px at 20% 10%, #1f2937 0%, #0b0f14 55%, #070a0f 100%);
+        }
+        """
+
+    st.markdown(
+        f"""
+        <style>
+        {background_css}
+
+        /* Hide Streamlit chrome */
+        #MainMenu {{visibility: hidden;}}
+        header {{visibility: hidden;}}
+        footer {{visibility: hidden;}}
+
+        /* Layout */
+        .block-container {{
+          padding-top: 1.2rem;
+          max-width: 1180px;
+        }}
+
+        /* Hero */
+        .hero {{
+          padding: 26px 28px;
+          border-radius: 18px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05));
+          border: 1px solid rgba(255,255,255,0.14);
+          backdrop-filter: blur(10px);
+          box-shadow: 0 18px 50px rgba(0,0,0,0.40);
+          margin-bottom: 16px;
+        }}
+        .hero h1 {{
+          color: #fff;
+          margin: 0;
+          font-size: 44px;
+          line-height: 1.05;
+          font-weight: 900;
+          letter-spacing: -0.6px;
+        }}
+        .hero p {{
+          color: rgba(255,255,255,0.70);
+          margin: 10px 0 0;
+          font-size: 14px;
+        }}
+
+        /* Card */
+        .card {{
+          padding: 16px 18px;
+          border-radius: 16px;
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.10);
+          backdrop-filter: blur(10px);
+          box-shadow: 0 10px 30px rgba(0,0,0,0.30);
+        }}
+
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {{
+          gap: 8px;
+          background: rgba(255,255,255,0.04);
+          padding: 8px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.10);
+        }}
+        .stTabs [data-baseweb="tab"] {{
+          border-radius: 12px;
+          padding: 10px 14px;
+          color: rgba(255,255,255,0.75);
+          background: transparent;
+        }}
+        .stTabs [aria-selected="true"] {{
+          background: rgba(255,255,255,0.12) !important;
+          color: #fff !important;
+          border: 1px solid rgba(255,255,255,0.16);
+        }}
+
+        /* Headings + text */
+        h2, h3, h4, p, label, .stMarkdown {{
+          color: rgba(255,255,255,0.92) !important;
+        }}
+        .stCaption {{
+          color: rgba(255,255,255,0.70) !important;
+        }}
+
+        /* Dataframes / Editors */
+        [data-testid="stDataFrame"], [data-testid="stTable"] {{
+          background: rgba(255,255,255,0.04);
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.10);
+          overflow: hidden;
+        }}
+
+        /* Alerts */
+        [data-testid="stAlert"] {{
+          border-radius: 14px;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def hero():
+    st.markdown(
+        """
+        <div class="hero">
+          <h1>Simulateur de salaire, la richesse sinon rien.</h1>
+          <p>« Ce qui ne se mesure pas ne s’améliore pas. » — Peter Drucker</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def card_start():
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+
+
+def card_end():
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # -----------------------
@@ -79,7 +219,6 @@ def months_between_inclusive(d1: date, d2: date) -> int:
 # Finance (prêt)
 # -----------------------
 def pmt(rate: float, nper: int, pv: float) -> float:
-    """Mensualité (positive) pour un prêt pv (positif), taux périodique rate."""
     if nper <= 0:
         return 0.0
     if abs(rate) < 1e-12:
@@ -88,14 +227,12 @@ def pmt(rate: float, nper: int, pv: float) -> float:
 
 
 def loan_monthly_payment(capital: float, annual_rate_pct: float, years: float) -> float:
-    """Mensualité hors assurance et hors frais (échéances constantes)."""
     n = int(round(years * 12))
     r = (annual_rate_pct / 100.0) / 12.0
     return float(pmt(r, n, capital))
 
 
 def amortization_schedule(capital: float, annual_rate_pct: float, years: float) -> pd.DataFrame:
-    """Tableau d'amortissement (hors assurance/frais)."""
     n = int(round(years * 12))
     r = (annual_rate_pct / 100.0) / 12.0
     payment = loan_monthly_payment(capital, annual_rate_pct, years)
@@ -112,13 +249,7 @@ def amortization_schedule(capital: float, annual_rate_pct: float, years: float) 
             payment_eff = payment
         balance = max(0.0, balance - principal)
         rows.append(
-            {
-                "Mois": k,
-                "Mensualité": payment_eff,
-                "Intérêts": interest,
-                "Principal": principal,
-                "Capital restant dû": balance,
-            }
+            {"Mois": k, "Mensualité": payment_eff, "Intérêts": interest, "Principal": principal, "Capital restant dû": balance}
         )
         if balance <= 1e-6:
             break
@@ -126,16 +257,13 @@ def amortization_schedule(capital: float, annual_rate_pct: float, years: float) 
 
 
 # -----------------------
-# Data schema (robust import/export)
+# Schemas
 # -----------------------
 EXPENSE_COLS = [
     "nom", "categorie", "montant", "frequence", "date_debut", "date_fin",
     "niveau", "commentaire", "actif"
 ]
 
-# Ajouts immo :
-# - prix_bien (optionnel), apport (optionnel)
-# - inclure_frais_notaire (bool) + frais_notaire_pct (% du prix)
 LOAN_COLS = [
     "nom", "type",
     "capital",
@@ -155,7 +283,6 @@ def ensure_expense_schema(df: pd.DataFrame) -> pd.DataFrame:
     for c in EXPENSE_COLS:
         if c not in df.columns:
             df[c] = None
-
     df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0.0)
     df["frequence"] = df["frequence"].fillna("mensuel")
     df["niveau"] = df["niveau"].fillna("Essentiel")
@@ -190,7 +317,7 @@ def ensure_loan_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------
-# Monthlyize expenses
+# Expenses mensualisation
 # -----------------------
 def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     warnings: List[str] = []
@@ -242,14 +369,9 @@ def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
 
 
 # -----------------------
-# Loans compute (avec apport immo)
+# Loans compute (immo + apport)
 # -----------------------
 def compute_loans(df: pd.DataFrame) -> Tuple[pd.DataFrame, float, List[str]]:
-    """
-    Logique immo (simple) :
-    - Si type=immo et prix_bien>0 : capital financé = prix_bien - apport (+ notaire optionnel)
-    - Sinon : capital financé = capital ; si apport>0, on le déduit du capital (warning)
-    """
     warnings: List[str] = []
     df = ensure_loan_schema(df).copy()
 
@@ -348,13 +470,6 @@ def compute_need_net_after_ir(
     epargne_pct_revenu: float,
     marge_imprevus_pct: float,
 ) -> Tuple[float, Dict[str, float]]:
-    """
-    Besoin net après IR (cash) :
-      marge = marge_imprevus_pct * depenses
-      base = depenses + prets + epargne_fixe + marge
-      si epargne_pct_revenu > 0 :
-        need = base / (1 - epargne_pct_revenu)
-    """
     marge = marge_imprevus_pct * depenses_m
     base = depenses_m + prets_m + epargne_fixe + marge
 
@@ -431,11 +546,9 @@ def default_expenses() -> pd.DataFrame:
         {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Internet + abonnements", "categorie": "Abonnements", "montant": 60.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-
         {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-
         {"nom": "Assurance auto", "categorie": "Assurances", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
     ]
@@ -443,15 +556,14 @@ def default_expenses() -> pd.DataFrame:
 
 
 def default_loans() -> pd.DataFrame:
-    # Exemple : immo + auto (modifiable/supprimable)
     data = [
         {
             "nom": "Prêt immo (exemple)",
             "type": "immo",
-            "capital": 0.0,                 # ignoré si prix_bien > 0
+            "capital": 0.0,
             "prix_bien": 170000.0,
             "apport": 20000.0,
-            "inclure_frais_notaire": False, # à activer si tu veux
+            "inclure_frais_notaire": False,
             "frais_notaire_pct": 8.5,
             "taux_annuel_pct": 3.6,
             "duree_annees": 25.0,
@@ -460,23 +572,7 @@ def default_loans() -> pd.DataFrame:
             "assurance_taux_annuel_pct": 0.0,
             "frais": 0.0,
             "etaler_frais": True,
-        },
-        {
-            "nom": "Prêt auto (exemple)",
-            "type": "auto",
-            "capital": 15000.0,
-            "prix_bien": 0.0,
-            "apport": 0.0,
-            "inclure_frais_notaire": False,
-            "frais_notaire_pct": 0.0,
-            "taux_annuel_pct": 4.2,
-            "duree_annees": 5.0,
-            "assurance_mode": "€/mois",
-            "assurance_mensuelle": 20.0,
-            "assurance_taux_annuel_pct": 0.0,
-            "frais": 300.0,
-            "etaler_frais": True,
-        },
+        }
     ]
     return ensure_loan_schema(pd.DataFrame(data))
 
@@ -486,7 +582,7 @@ def default_assumptions() -> Dict:
         "pas_rate": 0.081,          # 8,1%
         "ratio_net_brut": 0.78,
         "epargne_fixe": 300.0,
-        "epargne_pct_revenu": 0.0,  # avancé (optionnel)
+        "epargne_pct_revenu": 0.0,  # avancé
         "marge_imprevus_pct": 0.10,
         "amb_bonus_epargne": 200.0,
         "amb_bonus_marge": 0.00,
@@ -494,29 +590,7 @@ def default_assumptions() -> Dict:
 
 
 # -----------------------
-# Save / Load
-# -----------------------
-def bundle_to_json(expenses_df: pd.DataFrame, loans_df: pd.DataFrame, assumptions: Dict) -> str:
-    payload = {
-        "version": 4,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "assumptions": assumptions,
-        "expenses": ensure_expense_schema(expenses_df).to_dict(orient="records"),
-        "loans": ensure_loan_schema(loans_df).to_dict(orient="records"),
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-
-
-def json_to_bundle(s: str) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
-    obj = json.loads(s)
-    exp = ensure_expense_schema(pd.DataFrame(obj.get("expenses", [])))
-    loans = ensure_loan_schema(pd.DataFrame(obj.get("loans", [])))
-    assumptions = obj.get("assumptions", {})
-    return exp, loans, assumptions
-
-
-# -----------------------
-# UI
+# State
 # -----------------------
 def init_state():
     if "expenses_df" not in st.session_state:
@@ -527,57 +601,29 @@ def init_state():
         st.session_state.assumptions = default_assumptions()
 
 
-def render_hero():
-    st.markdown(
-        """
-        <style>
-          .hero {
-            padding: 26px 30px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #0b0f14, #111827 55%, #0b0f14);
-            margin-bottom: 18px;
-          }
-          .hero h1 {
-            color: #ffffff;
-            margin: 0;
-            font-size: 42px;
-            line-height: 1.05;
-            font-weight: 800;
-          }
-          .hero p {
-            color: rgba(255,255,255,0.65);
-            margin: 10px 0 0;
-            font-size: 14px;
-          }
-        </style>
-        <div class="hero">
-          <h1>Simulateur de salaire, la richesse sinon rien.</h1>
-          <p>« Ce qui ne se mesure pas ne s’améliore pas. » — Peter Drucker</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
+# -----------------------
+# App
+# -----------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
+    inject_css()
     init_state()
 
-    render_hero()
+    hero()
 
     st.caption(
         "On part du **net après IR (cash sur le compte)**, puis on remonte vers **net avant IR** et **brut**. "
-        "Modèle volontairement simple : PAS et ratio net→brut sont des approximations ajustables."
+        "PAS et ratio net→brut sont des approximations ajustables."
     )
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["1) Dépenses", "2) Crédits", "3) Hypothèses", "4) Résultats", "5) Export / reprise"]
-    )
+    tab1, tab2, tab3, tab4 = st.tabs(["1) Dépenses", "2) Crédits", "3) Hypothèses", "4) Résultats"])
 
-    # --- Dépenses ---
+    # ------------------ Tab 1: Dépenses ------------------
     with tab1:
+        card_start()
         st.subheader("Dépenses")
         exp = ensure_expense_schema(st.session_state.expenses_df)
+
         exp_editor = st.data_editor(
             exp,
             num_rows="dynamic",
@@ -597,6 +643,7 @@ def main():
         st.session_state.expenses_df = ensure_expense_schema(exp_editor)
 
         exp_m, exp_warn = monthlyize_expenses(st.session_state.expenses_df)
+
         st.markdown("#### Équivalents calculés")
         st.dataframe(
             exp_m[["nom", "categorie", "niveau", "frequence", "montant", "mensuel_equiv", "annuel_equiv", "actif"]],
@@ -604,14 +651,16 @@ def main():
         )
         if exp_warn:
             st.warning("Avertissements :\n- " + "\n- ".join(exp_warn))
+        card_end()
 
-    # --- Crédits ---
+    # ------------------ Tab 2: Crédits ------------------
     with tab2:
+        card_start()
         st.subheader("Crédits / dettes")
         st.write(
-            "Pour un **prêt immo** :\n"
-            "- soit tu renseignes **Prix du bien + Apport** (recommandé)\n"
-            "- soit tu renseignes **Capital** (capital financé). Si tu mets aussi un apport, il sera déduit du capital (warning)."
+            "**Immo** : renseigne **Prix du bien + Apport** (recommandé). "
+            "Sinon renseigne **Capital** (capital financé). "
+            "Si tu mets aussi un apport sans prix, il sera déduit du capital (warning)."
         )
 
         loans = ensure_loan_schema(st.session_state.loans_df)
@@ -622,20 +671,16 @@ def main():
             column_config={
                 "nom": st.column_config.TextColumn("Nom", required=True),
                 "type": st.column_config.SelectboxColumn("Type", options=LOAN_TYPE_OPTIONS, required=True),
-
                 "prix_bien": st.column_config.NumberColumn(f"[Immo] Prix du bien ({CURRENCY})", min_value=0.0, step=1000.0, format="%.0f"),
                 "apport": st.column_config.NumberColumn(f"[Immo] Apport ({CURRENCY})", min_value=0.0, step=1000.0, format="%.0f"),
                 "inclure_frais_notaire": st.column_config.CheckboxColumn("[Immo] Inclure frais de notaire"),
                 "frais_notaire_pct": st.column_config.NumberColumn("[Immo] Frais de notaire (%)", min_value=0.0, step=0.1, format="%.1f"),
-
                 "capital": st.column_config.NumberColumn(f"Capital (si pas prix/apport) ({CURRENCY})", min_value=0.0, step=1000.0, format="%.0f"),
                 "taux_annuel_pct": st.column_config.NumberColumn("Taux annuel (%)", min_value=0.0, step=0.1, format="%.2f"),
                 "duree_annees": st.column_config.NumberColumn("Durée (années)", min_value=0.1, step=0.5, format="%.1f"),
-
                 "assurance_mode": st.column_config.SelectboxColumn("Assurance", options=INS_TYPE_OPTIONS, required=True),
                 "assurance_mensuelle": st.column_config.NumberColumn(f"Assurance ({CURRENCY}/mois)", min_value=0.0, step=1.0, format="%.2f"),
                 "assurance_taux_annuel_pct": st.column_config.NumberColumn("Assurance (%/an)", min_value=0.0, step=0.05, format="%.2f"),
-
                 "frais": st.column_config.NumberColumn(f"Frais uniques ({CURRENCY})", min_value=0.0, step=10.0, format="%.0f"),
                 "etaler_frais": st.column_config.CheckboxColumn("Étaler les frais"),
             },
@@ -668,9 +713,11 @@ def main():
                     amortization_schedule(float(row["capital_finance_calc"]), float(row["taux_annuel_pct"]), float(row["duree_annees"])),
                     use_container_width=True,
                 )
+        card_end()
 
-    # --- Hypothèses ---
+    # ------------------ Tab 3: Hypothèses ------------------
     with tab3:
+        card_start()
         st.subheader("Hypothèses")
         a = st.session_state.assumptions
 
@@ -683,7 +730,6 @@ def main():
             a["marge_imprevus_pct"] = st.number_input("Marge imprévus (0.10 = 10% des dépenses)", 0.0, 1.0, float(a.get("marge_imprevus_pct", 0.10)), 0.01, format="%.2f")
 
         st.divider()
-
         d1, d2 = st.columns(2)
         with d1:
             a["epargne_fixe"] = st.number_input(f"Épargne cible ({CURRENCY}/mois)", 0.0, 100000.0, float(a.get("epargne_fixe", 300.0)), 50.0, format="%.0f")
@@ -697,13 +743,15 @@ def main():
         a["amb_bonus_marge"] = st.number_input("Ambitieux : + marge imprévus (ex : 0.05 = +5%)", 0.0, 1.0, float(a.get("amb_bonus_marge", 0.0)), 0.01, format="%.2f")
 
         st.session_state.assumptions = a
+        card_end()
 
-    # --- Résultats ---
+    # ------------------ Tab 4: Résultats ------------------
     with tab4:
+        card_start()
         st.subheader("Résultats (mensuel + annuel)")
 
         exp_m, exp_warn = monthlyize_expenses(st.session_state.expenses_df)
-        loans_calc, loans_total, loan_warn = compute_loans(st.session_state.loans_df)
+        _, loans_total, loan_warn = compute_loans(st.session_state.loans_df)
         a = st.session_state.assumptions
 
         errors = []
@@ -713,6 +761,7 @@ def main():
             errors.append("Ratio net→brut invalide (doit être >0 et ≤1).")
         if errors:
             st.error("Erreurs :\n- " + "\n- ".join(errors))
+            card_end()
             st.stop()
 
         warns_all = exp_warn + loan_warn
@@ -754,53 +803,10 @@ def main():
         st.dataframe(scen_df, use_container_width=True)
 
         st.info(
-            "IR n'agit pas sur le brut : "
-            "**Net avant IR** est une estimation via le PAS (avec possible régularisation), "
-            "**Brut** est une estimation via un ratio net→brut."
+            "Rappel : **Net avant IR** est estimé via le PAS (régularisation possible), "
+            "**Brut** est estimé via un ratio net→brut."
         )
-
-    # --- Export / reprise ---
-    with tab5:
-        st.subheader("Export / reprise")
-
-        exp = ensure_expense_schema(st.session_state.expenses_df)
-        loans = ensure_loan_schema(st.session_state.loans_df)
-        a = st.session_state.assumptions
-
-        exp_m, _ = monthlyize_expenses(exp)
-        _, loans_total, _ = compute_loans(loans)
-        _, scen_df = build_scenarios(exp_m, loans_total, a)
-
-        colA, colB = st.columns(2)
-        with colA:
-            st.markdown("### CSV")
-            st.download_button("Dépenses (CSV)", exp.to_csv(index=False).encode("utf-8"), "depenses.csv", "text/csv")
-            st.download_button("Crédits (CSV)", loans.to_csv(index=False).encode("utf-8"), "credits.csv", "text/csv")
-            st.download_button("Scénarios (CSV)", scen_df.to_csv(index=False).encode("utf-8"), "scenarios.csv", "text/csv")
-
-        with colB:
-            st.markdown("### Fichier de reprise")
-            payload = bundle_to_json(exp, loans, a).encode("utf-8")
-            st.download_button("Télécharger mon fichier de reprise", payload, "reprise_train_de_vie.json", "application/json")
-
-            up = st.file_uploader("Importer un fichier de reprise", type=["json"])
-            if up is not None:
-                try:
-                    s = up.read().decode("utf-8")
-                    exp2, loans2, a2 = json_to_bundle(s)
-                    st.session_state.expenses_df = exp2
-                    st.session_state.loans_df = loans2
-                    st.session_state.assumptions = {**default_assumptions(), **a2}
-                    st.success("Reprise importée.")
-                except Exception as e:
-                    st.error(f"Import impossible : {e}")
-
-        st.divider()
-        if st.button("Réinitialiser (données d'exemple)"):
-            st.session_state.expenses_df = default_expenses()
-            st.session_state.loans_df = default_loans()
-            st.session_state.assumptions = default_assumptions()
-            st.success("Réinitialisé.")
+        card_end()
 
 
 if __name__ == "__main__":
