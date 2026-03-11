@@ -8,19 +8,22 @@ Design:
 Immo:
 - Si type=immo et prix_bien>0 : capital financé = prix_bien - apport (+ notaire optionnel)
 - Sinon : capital financé = capital ; si apport>0, on le déduit du capital (warning)
+
+Simplification dépenses:
+- Pas de notes, pas de dates.
+- Dépense "ponctuel" = étalée sur 12 mois (warning).
 """
 
 from __future__ import annotations
 
 import base64
 import math
-from datetime import date, datetime
+from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
-import altair as alt
 
 
 # -----------------------
@@ -74,18 +77,15 @@ def inject_css():
         <style>
         {background_css}
 
-        /* Hide Streamlit chrome */
         #MainMenu {{visibility: hidden;}}
         header {{visibility: hidden;}}
         footer {{visibility: hidden;}}
 
-        /* Layout */
         .block-container {{
           padding-top: 1.2rem;
           max-width: 1180px;
         }}
 
-        /* Hero */
         .hero {{
           padding: 26px 28px;
           border-radius: 18px;
@@ -109,7 +109,6 @@ def inject_css():
           font-size: 14px;
         }}
 
-        /* Card */
         .card {{
           padding: 16px 18px;
           border-radius: 16px;
@@ -119,7 +118,6 @@ def inject_css():
           box-shadow: 0 10px 30px rgba(0,0,0,0.30);
         }}
 
-        /* Tabs */
         .stTabs [data-baseweb="tab-list"] {{
           gap: 8px;
           background: rgba(255,255,255,0.04);
@@ -139,7 +137,6 @@ def inject_css():
           border: 1px solid rgba(255,255,255,0.16);
         }}
 
-        /* Headings + text */
         h2, h3, h4, p, label, .stMarkdown {{
           color: rgba(255,255,255,0.92) !important;
         }}
@@ -147,7 +144,6 @@ def inject_css():
           color: rgba(255,255,255,0.70) !important;
         }}
 
-        /* Dataframes / Editors */
         [data-testid="stDataFrame"], [data-testid="stTable"] {{
           background: rgba(255,255,255,0.04);
           border-radius: 14px;
@@ -155,7 +151,6 @@ def inject_css():
           overflow: hidden;
         }}
 
-        /* Alerts */
         [data-testid="stAlert"] {{
           border-radius: 14px;
         }}
@@ -192,27 +187,6 @@ def fmt_eur(x: float) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "—"
     return f"{x:,.0f} {CURRENCY}".replace(",", " ")
-
-
-def as_date(x) -> Optional[date]:
-    if x is None:
-        return None
-    try:
-        if pd.isna(x):
-            return None
-    except Exception:
-        pass
-    if isinstance(x, datetime):
-        return x.date()
-    if isinstance(x, date):
-        return x
-    return None
-
-
-def months_between_inclusive(d1: date, d2: date) -> int:
-    if d2 < d1:
-        return 0
-    return (d2.year - d1.year) * 12 + (d2.month - d1.month) + 1
 
 
 # -----------------------
@@ -257,12 +231,9 @@ def amortization_schedule(capital: float, annual_rate_pct: float, years: float) 
 
 
 # -----------------------
-# Schemas
+# Schemas (simplifiés)
 # -----------------------
-EXPENSE_COLS = [
-    "nom", "categorie", "montant", "frequence", "date_debut", "date_fin",
-    "niveau", "commentaire", "actif"
-]
+EXPENSE_COLS = ["nom", "categorie", "montant", "frequence", "niveau", "actif"]
 
 LOAN_COLS = [
     "nom", "type",
@@ -283,13 +254,13 @@ def ensure_expense_schema(df: pd.DataFrame) -> pd.DataFrame:
     for c in EXPENSE_COLS:
         if c not in df.columns:
             df[c] = None
+
     df["montant"] = pd.to_numeric(df["montant"], errors="coerce").fillna(0.0)
     df["frequence"] = df["frequence"].fillna("mensuel")
     df["niveau"] = df["niveau"].fillna("Essentiel")
     df["actif"] = df["actif"].fillna(True).astype(bool)
     df["categorie"] = df["categorie"].fillna("Autres")
     df["nom"] = df["nom"].fillna("")
-    df["commentaire"] = df["commentaire"].fillna("")
     return df[EXPENSE_COLS].copy()
 
 
@@ -317,7 +288,7 @@ def ensure_loan_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # -----------------------
-# Expenses mensualisation
+# Expenses mensualisation (sans dates)
 # -----------------------
 def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
     warnings: List[str] = []
@@ -346,17 +317,9 @@ def monthlyize_expenses(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         elif freq == "annuel":
             m = amount / 12
         elif freq == "ponctuel":
-            s = as_date(row["date_debut"])
-            e = as_date(row["date_fin"]) or s
-            if s is None:
-                warnings.append(f"Ponctuel '{row['nom']}' sans date → étalé sur 12 mois.")
-                months = 12
-            else:
-                months = months_between_inclusive(s, e) if e else 1
-                if months <= 0:
-                    warnings.append(f"Ponctuel '{row['nom']}' : dates incohérentes → étalé sur 12 mois.")
-                    months = 12
-            m = amount / months
+            # Sans dates : on mensualise par convention sur 12 mois.
+            m = amount / 12
+            warnings.append(f"Ponctuel '{row['nom']}' : étalé sur 12 mois (pas de dates).")
         else:
             m = amount
 
@@ -541,16 +504,16 @@ def build_scenarios(exp_m: pd.DataFrame, loans_total_monthly: float, assumptions
 # -----------------------
 def default_expenses() -> pd.DataFrame:
     data = [
-        {"nom": "Loyer", "categorie": "Logement", "montant": 1150.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Charges", "categorie": "Logement", "montant": 50.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Internet + abonnements", "categorie": "Abonnements", "montant": 60.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
-        {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Assurance auto", "categorie": "Assurances", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
-        {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
+        {"nom": "Loyer", "categorie": "Logement", "montant": 1150.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Charges", "categorie": "Logement", "montant": 50.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Internet + abonnements", "categorie": "Abonnements", "montant": 60.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "niveau": "Confort", "actif": True},
+        {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 90.0, "frequence": "mensuel", "niveau": "Essentiel", "actif": True},
+        {"nom": "Assurance auto", "categorie": "Assurances", "montant": 80.0, "frequence": "mensuel", "niveau": "Confort", "actif": True},
+        {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "niveau": "Confort", "actif": True},
     ]
     return ensure_expense_schema(pd.DataFrame(data))
 
@@ -633,10 +596,7 @@ def main():
                 "categorie": st.column_config.TextColumn("Catégorie", required=True),
                 "montant": st.column_config.NumberColumn(f"Montant ({CURRENCY})", min_value=0.0, step=10.0, format="%.2f"),
                 "frequence": st.column_config.SelectboxColumn("Fréquence", options=FREQ_OPTIONS, required=True),
-                "date_debut": st.column_config.DateColumn("Début (si ponctuel)", format="DD/MM/YYYY"),
-                "date_fin": st.column_config.DateColumn("Fin (si ponctuel)", format="DD/MM/YYYY"),
                 "niveau": st.column_config.SelectboxColumn("Essentiel/Confort", options=LEVEL_OPTIONS, required=True),
-                "commentaire": st.column_config.TextColumn("Note (optionnel)"),
                 "actif": st.column_config.CheckboxColumn("Actif"),
             },
         )
@@ -745,7 +705,7 @@ def main():
         st.session_state.assumptions = a
         card_end()
 
-    # ------------------ Tab 4: Résultats ------------------
+    # ------------------ Tab 4: Résultats (sans graphique) ------------------
     with tab4:
         card_start()
         st.subheader("Résultats (mensuel + annuel)")
@@ -786,18 +746,6 @@ def main():
         st.markdown("#### Décomposition (mensuel)")
         bdf = pd.DataFrame(list(s["_breakdown"].items()), columns=["Poste", "Montant"])
         st.dataframe(bdf, use_container_width=True)
-
-        st.markdown("#### Comparaison des scénarios (mensuel)")
-        melt = scen_df[["Scénario", "Net après IR (mensuel)", "Brut (mensuel)"]].melt(
-            "Scénario", var_name="Mesure", value_name="Montant"
-        )
-        chart = alt.Chart(melt).mark_bar().encode(
-            x=alt.X("Scénario:N"),
-            y=alt.Y("Montant:Q"),
-            color="Mesure:N",
-            tooltip=["Scénario", "Mesure", alt.Tooltip("Montant:Q", format=",.0f")],
-        )
-        st.altair_chart(chart, use_container_width=True)
 
         st.markdown("#### Tableau complet")
         st.dataframe(scen_df, use_container_width=True)
