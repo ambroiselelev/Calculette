@@ -364,14 +364,14 @@ def default_expenses() -> pd.DataFrame:
         {"nom": "Loyer", "categorie": "Logement", "montant": 1150.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Charges", "categorie": "Logement", "montant": 50.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Internet", "categorie": "Logement", "montant": 40.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Internet et abonnements", "categorie": "Logement", "montant": 60.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
         {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 900.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
-        {"nom": "Assurances", "categorie": "Abonnements", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
+        {"nom": "Assurances", "categorie": "transports", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
     ]
     return ensure_expense_schema(pd.DataFrame(data))
