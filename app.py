@@ -361,17 +361,17 @@ def brut_from_ratio(net_before_ir: float, ratio_net_brut: float) -> float:
 # -----------------------
 def default_expenses() -> pd.DataFrame:
     data = [
-        {"nom": "Loyer", "categorie": "Logement", "montant": 1500.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Charges", "categorie": "Logement", "montant": 150.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 120.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Loyer", "categorie": "Logement", "montant": 1150.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Charges", "categorie": "Logement", "montant": 50.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Énergie (élec/gaz)", "categorie": "Logement", "montant": 90.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Internet", "categorie": "Logement", "montant": 40.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
         {"nom": "Assurance habitation", "categorie": "Assurances", "montant": 18.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
         {"nom": "Courses", "categorie": "Alimentation", "montant": 450.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
-        {"nom": "Restaurants", "categorie": "Alimentation", "montant": 220.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
-        {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 86.4, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
+        {"nom": "Restaurants", "categorie": "Alimentation", "montant": 100.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
+        {"nom": "Transport (Navigo)", "categorie": "Transport", "montant": 900.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Essentiel", "commentaire": "", "actif": True},
 
-        {"nom": "Sport", "categorie": "Abonnements", "montant": 45.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
+        {"nom": "Assurances", "categorie": "Abonnements", "montant": 80.0, "frequence": "mensuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
         {"nom": "Vacances (mensualisées)", "categorie": "Loisirs", "montant": 1800.0, "frequence": "annuel", "date_debut": None, "date_fin": None, "niveau": "Confort", "commentaire": "", "actif": True},
     ]
     return ensure_expense_schema(pd.DataFrame(data))
@@ -380,19 +380,19 @@ def default_expenses() -> pd.DataFrame:
 def default_loans() -> pd.DataFrame:
     data = [
         {
-            "nom": "Prêt auto (exemple)",
-            "type": "auto",
-            "capital": 15000.0,
+            "nom": "Prêt immo",
+            "type": "immo",
+            "capital": 150000.0,
             "prix_bien": 0.0,
-            "apport": 0.0,
+            "apport": 20000.0,
             "inclure_frais_notaire": True,
-            "frais_notaire_pct": 7.5,
-            "taux_annuel_pct": 4.2,
-            "duree_annees": 5.0,
+            "frais_notaire_pct": 8.5,
+            "taux_annuel_pct": 3.6,
+            "duree_annees": 25.0,
             "assurance_mode": "€/mois",
-            "assurance_mensuelle": 20.0,
+            "assurance_mensuelle": 0.0,
             "assurance_taux_annuel_pct": 0.0,
-            "frais": 300.0,
+            "frais": 0.0,
             "etaler_frais": True,
         }
     ]
